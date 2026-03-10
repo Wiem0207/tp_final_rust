@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 use crate::Store;
+use std::time::Instant;
+
+// Vous pouvez stocker l'instant d'expiration avec la valeur :
+pub struct Entry {
+    value: String,
+    pub expires_at: Option<Instant>,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct Request {
@@ -45,13 +52,18 @@ pub async fn handle_command(raw: &str, store: &Store) -> Response {
 async fn cmd_set(req: Request, store: &Store) -> Response {
     let key = match req.key { Some(k) => k, None => return error("missing key") };
     let value = match req.value { Some(v) => v, None => return error("missing value") };
-    store.lock().await.insert(key, value);
+    store.lock().await.insert(key, Entry { value, expires_at: None });
     ok()
 }
-
+// we need to verify that the key did not expire 
 async fn cmd_get(req: Request, store: &Store) -> Response {
     let key = match req.key { Some(k) => k, None => return error("missing key") };
-    let value = store.lock().await.get(&key).cloned();
+    let map = store.lock().await;
+    let now = Instant::now();
+    let value = match map.get(&key) {
+        Some(e) if e.expires_at.map(|t| t > now) != Some(false) => Some(e.value.clone()),
+        _ => None,
+    };
     Response::OkValue { status: "ok", value }
 }
 
@@ -62,6 +74,14 @@ async fn cmd_del(req: Request, store: &Store) -> Response {
 }
 
 async fn cmd_keys(store: &Store) -> Response {
-    let keys = store.lock().await.keys().cloned().collect();
+    let map = store.lock().await;
+    let now = Instant::now();
+    let mut keys = Vec::new();
+    for (k, e) in map.iter() {
+        let expired = e.expires_at.map(|t| t <= now) == Some(true);
+        if !expired {
+            keys.push(k.clone());
+        }
+    }
     Response::OkKeys { status: "ok", keys }
 }

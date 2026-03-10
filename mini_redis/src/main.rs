@@ -3,10 +3,11 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
+use std::time::Instant;
 
 mod command;
-use command::{handle_command};
-type Store = Arc<Mutex<HashMap<String, String>>>;
+use command::{Entry,handle_command};
+type Store = Arc<Mutex<HashMap<String, Entry>>>;
 #[tokio::main]
 async fn main() {
     // Initialiser tracing
@@ -44,13 +45,26 @@ async fn handle_client(socket: tokio::net::TcpStream, store: Store) {
     let (read_half, mut write_half) = socket.into_split();
     let mut reader = BufReader::new(read_half);
     let mut line = String::new();
-
+    // background check to delete expired keys : 
+    let store_cleaner = Arc::clone(&store);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            let now = Instant::now();
+            let mut map = store_cleaner.lock().await;
+            map.retain(|_, e| match e.expires_at {
+                None => true,
+                Some(t) => t > now,
+            });
+        }
+    });
     loop {
         line.clear();
         match reader.read_line(&mut line).await {
-            Ok(0) => break,   // client déconnecté
+            Ok(0) => break,
             Ok(_) => {}
-            Err(_) => break,  // erreur réseau
+            Err(_) => break,
         }
 
         let trimmed = line.trim();
