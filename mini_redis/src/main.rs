@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use std::time::Instant;
 
 mod command;
-use command::{Entry,handle_command};
+use command::{handle_command, Entry};
 
 // état partagé entre tous les clients comme suggéré dans le sujet :
 // Arc<Mutex<HashMap<String, Entry>>> pour gérer les connexions concurrentes
@@ -24,7 +24,7 @@ async fn main() {
         .init();
     // 1. Créer le store partagé (Arc<Mutex<HashMap<String, ...>>>) :
     let store: Store = Arc::new(Mutex::new(HashMap::new()));
-    // background check to delete expired keys : 
+    // background check to delete expired keys :
     let store_cleaner = Arc::clone(&store);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
@@ -38,13 +38,14 @@ async fn main() {
             });
         }
     });
-    // Bind un TcpListener sur 127.0.0.1:7878 : 
-    let listener = TcpListener::bind("127.0.0.1:7878").await
-        .expect("Impossible de se connecter a 127.0.0.1 avec le port 7878 vérifie si le port est en use") ;
+    // Bind un TcpListener sur 127.0.0.1:7878 :
+    let listener = TcpListener::bind("127.0.0.1:7878").await.expect(
+        "Impossible de se connecter a 127.0.0.1 avec le port 7878 vérifie si le port est en use",
+    );
     // 3. accept loop : chaque client est traité dans sa propre tâche Tokio
     loop {
         let (socket, ..) = listener.accept().await.unwrap();
-        // cloning the shared store for the next thread 
+        // cloning the shared store for the next thread
         let store = Arc::clone(&store);
         tokio::spawn(async move {
             handle_client(socket, store).await;
@@ -59,10 +60,9 @@ async fn main() {
     // 3. Accept loop : pour chaque connexion, spawn une tâche
     // 4. Dans chaque tâche : lire les requêtes JSON ligne par ligne,
     //    traiter la commande, envoyer la réponse JSON + '\n'
-
 }
 async fn handle_client(socket: tokio::net::TcpStream, store: Store) {
-     // lecture ligne par ligne avec BufReader 
+    // lecture ligne par ligne avec BufReader
     let (read_half, mut write_half) = socket.into_split();
     let mut reader = BufReader::new(read_half);
     let mut line = String::new();
@@ -87,3 +87,49 @@ async fn handle_client(socket: tokio::net::TcpStream, store: Store) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use command::handle_command;
+
+    fn make_store() -> Store {
+        Arc::new(Mutex::new(HashMap::new()))
+    }
+    #[tokio::test]
+    async fn test_ping() {
+        let store = make_store();
+        let r = handle_command(r#"{"cmd":"PING"}"#, &store).await;
+        let json = serde_json::to_string(&r).unwrap();
+        assert_eq!(json, r#"{"status":"ok"}"#);
+    }
+    #[tokio::test]
+    async fn test_set() {
+        let store = make_store();
+        let r = handle_command(r#"{"cmd":"SET","key":"ma_cle","value":"ma_valeur"}"#, &store).await;
+        let json = serde_json::to_string(&r).unwrap();
+        assert_eq!(json, r#"{"status":"ok"}"#);
+    }
+     #[tokio::test]
+    async fn test_get() {
+        let store = make_store();
+        let r = handle_command(r#"{"cmd":"GET","key":"ma_cle"}"#, &store).await;
+        let json = serde_json::to_string(&r).unwrap();
+        assert_eq!(json, r#"{"status":"ok","value":null}"#);
+    }
+    #[tokio::test]
+    async fn test_invalid_json() {
+        let store = make_store();
+        let r = handle_command("not json", &store).await;
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"error\""));
+    }
+    #[tokio::test]
+    async fn test_incr() {
+        let store = make_store();
+        let r = handle_command(r#"{"cmd":"INCR","key":"n"}"#, &store).await;
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"value\":1"));
+    }
+}
+
