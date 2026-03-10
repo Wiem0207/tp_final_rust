@@ -13,6 +13,7 @@ pub struct Request {
     pub cmd: String,
     pub key: Option<String>,
     pub value: Option<String>,
+    pub seconds: Option<u64>,  
 }
 
 #[derive(Debug, Serialize)]
@@ -21,6 +22,7 @@ pub enum Response {
     Ok      { status: &'static str },
     OkValue { status: &'static str, value: Option<String> },
     OkCount { status: &'static str, count: u32 },
+    OkTtl   { status: &'static str, ttl: i64 }, 
     OkKeys  { status: &'static str, keys: Vec<String> },
     Error   { status: &'static str, message: String },
 }
@@ -45,6 +47,8 @@ pub async fn handle_command(raw: &str, store: &Store) -> Response {
         "GET"  => cmd_get(req, store).await,
         "DEL"  => cmd_del(req, store).await,
         "KEYS" => cmd_keys(store).await,
+        "EXPIRE" => cmd_expire(req, store).await,
+        "TTL"    => cmd_ttl(req, store).await,
         _      => error("unknown command"),
     }
 }
@@ -84,4 +88,27 @@ async fn cmd_keys(store: &Store) -> Response {
         }
     }
     Response::OkKeys { status: "ok", keys }
+}
+async fn cmd_expire(req: Request, store: &Store) -> Response {
+    let key = match req.key { Some(k) => k, None => return error("missing key") };
+    let secs = match req.seconds { Some(s) => s, None => return error("missing seconds") };
+    let mut map = store.lock().await;
+    match map.get_mut(&key) {
+        None => error("key not found"),
+        Some(e) => {
+            e.expires_at = Some(Instant::now() + std::time::Duration::from_secs(secs));
+            ok()
+        }
+    }
+}
+
+async fn cmd_ttl(req: Request, store: &Store) -> Response {
+    let key = match req.key { Some(k) => k, None => return error("missing key") };
+    match store.lock().await.get(&key) {
+        None => Response::OkTtl { status: "ok", ttl: -2 },
+        Some(e) => match e.expires_at {
+            None => Response::OkTtl { status: "ok", ttl: -1 },
+            Some(t) => Response::OkTtl { status: "ok", ttl: t.duration_since(Instant::now()).as_secs() as i64 },
+        }
+    }
 }
