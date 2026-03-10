@@ -51,15 +51,6 @@ async fn main() {
             handle_client(socket, store).await;
         });
     }
-
-    // TODO: Implémenter le serveur MiniRedis sur 127.0.0.1:7878
-    //
-    // Étapes suggérées :
-    // 1. Créer le store partagé (Arc<Mutex<HashMap<String, ...>>>)
-    // 2. Bind un TcpListener sur 127.0.0.1:7878
-    // 3. Accept loop : pour chaque connexion, spawn une tâche
-    // 4. Dans chaque tâche : lire les requêtes JSON ligne par ligne,
-    //    traiter la commande, envoyer la réponse JSON + '\n'
 }
 async fn handle_client(socket: tokio::net::TcpStream, store: Store) {
     // lecture ligne par ligne avec BufReader
@@ -87,7 +78,7 @@ async fn handle_client(socket: tokio::net::TcpStream, store: Store) {
         }
     }
 }
-
+//  tests !! 
 #[cfg(test)]
 mod tests {
     use super::*;

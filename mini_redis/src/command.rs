@@ -5,7 +5,7 @@ use std::time::Instant;
 
 // Vous pouvez stocker l'instant d'expiration avec la valeur :
 pub struct Entry {
-    value: String,
+    pub value: String,
     pub expires_at: Option<Instant>,
 }
 
