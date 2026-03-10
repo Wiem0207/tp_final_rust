@@ -53,6 +53,7 @@ pub async fn handle_command(raw: &str, store: &Store) -> Response {
         "TTL"    => cmd_ttl(req, store).await,
         "INCR" => cmd_incr_decr(req, store, 1).await,
         "DECR" => cmd_incr_decr(req, store, -1).await,
+        "SAVE" => cmd_save(store).await,
         _      => error("unknown command"),
     }
 }
@@ -129,4 +130,18 @@ async fn cmd_incr_decr(req: Request, store: &Store, delta: i64) -> Response {
     let new_val = current + delta;
     map.insert(key, Entry { value: new_val.to_string(), expires_at: None });
     Response::OkInt { status: "ok", value: new_val }
+}
+async fn cmd_save(store: &Store) -> Response {
+    let map = store.lock().await;
+    let mut data = HashMap::new();
+    for (k, e) in map.iter() {
+        data.insert(k.clone(), e.value.clone());
+    }
+    match serde_json::to_string(&data) {
+        Err(_) => error("serialization failed"),
+        Ok(json) => match std::fs::write("dump.json", json) {
+            Ok(_) => ok(),
+            Err(e) => error(&e.to_string()),
+        }
+    }
 }
