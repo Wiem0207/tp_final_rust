@@ -106,11 +106,15 @@ mod tests {
     #[tokio::test]
     async fn test_set() {
         let store = make_store();
-        let r = handle_command(r#"{"cmd":"SET","key":"ma_cle","value":"ma_valeur"}"#, &store).await;
+        let r = handle_command(
+            r#"{"cmd":"SET","key":"ma_cle","value":"ma_valeur"}"#,
+            &store,
+        )
+        .await;
         let json = serde_json::to_string(&r).unwrap();
         assert_eq!(json, r#"{"status":"ok"}"#);
     }
-     #[tokio::test]
+    #[tokio::test]
     async fn test_get() {
         let store = make_store();
         let r = handle_command(r#"{"cmd":"GET","key":"ma_cle"}"#, &store).await;
@@ -132,4 +136,3 @@ mod tests {
         assert!(json.contains("\"value\":1"));
     }
 }
-
