@@ -7,6 +7,11 @@ use std::time::Instant;
 
 mod command;
 use command::{Entry,handle_command};
+
+// état partagé entre tous les clients comme suggéré dans le sujet :
+// Arc<Mutex<HashMap<String, Entry>>> pour gérer les connexions concurrentes
+// j'ai étendu String en Entry pour supporter EXPIRE (palier 2)
+
 type Store = Arc<Mutex<HashMap<String, Entry>>>;
 #[tokio::main]
 async fn main() {
@@ -19,11 +24,26 @@ async fn main() {
         .init();
     // 1. Créer le store partagé (Arc<Mutex<HashMap<String, ...>>>) :
     let store: Store = Arc::new(Mutex::new(HashMap::new()));
+    // background check to delete expired keys : 
+    let store_cleaner = Arc::clone(&store);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            let now = Instant::now();
+            let mut map = store_cleaner.lock().await;
+            map.retain(|_, e| match e.expires_at {
+                None => true,
+                Some(t) => t > now,
+            });
+        }
+    });
     // Bind un TcpListener sur 127.0.0.1:7878 : 
     let listener = TcpListener::bind("127.0.0.1:7878").await
         .expect("Impossible de se connecter a 127.0.0.1 avec le port 7878 vérifie si le port est en use") ;
+    // 3. accept loop : chaque client est traité dans sa propre tâche Tokio
     loop {
-        let (socket, addr) = listener.accept().await.unwrap();
+        let (socket, ..) = listener.accept().await.unwrap();
         // cloning the shared store for the next thread 
         let store = Arc::clone(&store);
         tokio::spawn(async move {
@@ -42,23 +62,10 @@ async fn main() {
 
 }
 async fn handle_client(socket: tokio::net::TcpStream, store: Store) {
+     // lecture ligne par ligne avec BufReader 
     let (read_half, mut write_half) = socket.into_split();
     let mut reader = BufReader::new(read_half);
     let mut line = String::new();
-    // background check to delete expired keys : 
-    let store_cleaner = Arc::clone(&store);
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
-        loop {
-            interval.tick().await;
-            let now = Instant::now();
-            let mut map = store_cleaner.lock().await;
-            map.retain(|_, e| match e.expires_at {
-                None => true,
-                Some(t) => t > now,
-            });
-        }
-    });
     loop {
         line.clear();
         match reader.read_line(&mut line).await {
