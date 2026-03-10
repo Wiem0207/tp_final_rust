@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use crate::Store;
 use std::time::Instant;
+use std::collections::HashMap;
 
 // Vous pouvez stocker l'instant d'expiration avec la valeur :
 pub struct Entry {
@@ -22,8 +23,9 @@ pub enum Response {
     Ok      { status: &'static str },
     OkValue { status: &'static str, value: Option<String> },
     OkCount { status: &'static str, count: u32 },
-    OkTtl   { status: &'static str, ttl: i64 }, 
+    OkTtl   { status: &'static str, ttl: i64 },
     OkKeys  { status: &'static str, keys: Vec<String> },
+    OkInt { status: &'static str, value: i64 },
     Error   { status: &'static str, message: String },
 }
 
@@ -49,6 +51,8 @@ pub async fn handle_command(raw: &str, store: &Store) -> Response {
         "KEYS" => cmd_keys(store).await,
         "EXPIRE" => cmd_expire(req, store).await,
         "TTL"    => cmd_ttl(req, store).await,
+        "INCR" => cmd_incr_decr(req, store, 1).await,
+        "DECR" => cmd_incr_decr(req, store, -1).await,
         _      => error("unknown command"),
     }
 }
@@ -111,4 +115,18 @@ async fn cmd_ttl(req: Request, store: &Store) -> Response {
             Some(t) => Response::OkTtl { status: "ok", ttl: t.duration_since(Instant::now()).as_secs() as i64 },
         }
     }
+}
+async fn cmd_incr_decr(req: Request, store: &Store, delta: i64) -> Response {
+    let key = match req.key { Some(k) => k, None => return error("missing key") };
+    let mut map = store.lock().await;
+    let current = match map.get(&key) {
+        None => 0,
+        Some(e) => match e.value.parse::<i64>() {
+            Ok(n) => n,
+            Err(_) => return error("not an integer"),
+        }
+    };
+    let new_val = current + delta;
+    map.insert(key, Entry { value: new_val.to_string(), expires_at: None });
+    Response::OkInt { status: "ok", value: new_val }
 }
